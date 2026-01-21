@@ -1,0 +1,8 @@
+.git
+.gitignore
+__pycache__
+*.pyc
+requests.db
+uploads/
+.vercel
+node_modules
