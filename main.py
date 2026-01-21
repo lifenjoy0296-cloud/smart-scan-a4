@@ -38,6 +38,24 @@ def get_db():
 async def read_root(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
+@app.get("/api/proxy-image")
+async def proxy_image(url: str):
+    import requests
+    from fastapi import Response
+    
+    # Convert to direct link if it's a standard view link
+    if "drive.google.com" in url:
+        import re
+        match = re.search(r'\/d\/(.+?)(?:\/|$|\?)', url) or re.search(r'[?&]id=(.+?)(?:&|$)', url)
+        if match:
+            url = f"https://drive.google.com/uc?export=view&id={match.group(1)}"
+
+    try:
+        res = requests.get(url, timeout=10)
+        return Response(content=res.content, media_type=res.headers.get("Content-Type", "image/jpeg"))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_dashboard(request: Request):
     return templates.TemplateResponse("admin.html", {"request": request})

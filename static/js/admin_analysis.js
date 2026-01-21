@@ -17,6 +17,13 @@ let currentRefType = 'A4';
 let currentImages = []; // List of image objects
 let selectedImageId = null;
 
+// Helper to convert Google Drive Link to a Proxy Link through our server
+function getDirectDriveUrl(url) {
+    if (!url || typeof url !== 'string') return '';
+    // Use our server-side proxy to bypass Google Drive's CORS/Loading issues
+    return `/api/proxy-image?url=${encodeURIComponent(url)}`;
+}
+
 // Init
 function init() {
     loadRequests();
@@ -98,8 +105,8 @@ function renderGallery() {
         const thumb = document.createElement('div');
         const isSelected = img.id === selectedImageId;
         thumb.className = `flex-shrink-0 w-20 h-20 rounded border-2 cursor-pointer transition-all overflow-hidden ${isSelected ? 'border-blue-500 scale-105' : 'border-transparent opacity-60 hover:opacity-100'}`;
-        // Note: Google Drive direct links might need small modification for <img> src, but usually GAS returns a viewable URL
-        thumb.innerHTML = `<img src="${img.image_path}" class="w-full h-full object-cover">`;
+        const directUrl = getDirectDriveUrl(img.image_path);
+        thumb.innerHTML = `<img src="${directUrl}" class="w-full h-full object-cover">`;
         thumb.onclick = () => selectImage(img.id);
         gallery.appendChild(thumb);
     });
@@ -118,17 +125,37 @@ function selectImage(id) {
 
     // Reset Canvas & Load Image
     const img = new Image();
-    // Proxy through a CORS-friendly way if needed, but Drive sometimes allows this or use GAS to serve it.
-    // For now, assume url is accessible or use a thumbnail proxy
+    const directUrl = getDirectDriveUrl(imgData.image_path);
+    console.log("Loading Image URL:", directUrl);
+
     img.crossOrigin = "anonymous";
-    img.src = imgData.image_path;
+    img.src = directUrl;
+
     img.onload = () => {
+        console.log("Image loaded successfully with CORS");
         currentImage = img;
         resizeCanvas();
         fitImageToCanvas();
         refBox = null;
         measureLine = null;
         draw();
+    };
+
+    img.onerror = () => {
+        console.warn("Image load failed with CORS. Trying fallback...");
+        const fallbackImg = new Image();
+        fallbackImg.src = directUrl;
+        fallbackImg.onload = () => {
+            console.log("Image loaded (CORS Fallback)");
+            currentImage = fallbackImg;
+            resizeCanvas();
+            fitImageToCanvas();
+            draw();
+        };
+        fallbackImg.onerror = () => {
+            console.error("Critical Image Failure:", directUrl);
+            alert("이미지를 불러올 수 없습니다. 구글 드라이브의 '링크 공유'가 '모든 사용자에게 공개'로 되어 있는지 확인해 주세요.");
+        };
     };
     renderGallery();
 }
