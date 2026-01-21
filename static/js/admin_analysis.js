@@ -10,7 +10,9 @@ let isDragging = false;
 let startPos = { x: 0, y: 0 };
 
 let mode = 'select'; // select, ref, measure
+let previousMode = 'select'; // for spacebar return
 let refBox = null; // {x, y, w, h}
+let isRefLocked = false;
 let measureLine = null; // {x1, y1, x2, y2}
 
 let currentRefType = 'A4';
@@ -35,6 +37,25 @@ function init() {
     canvas.addEventListener('mousemove', onMouseMove);
     canvas.addEventListener('mouseup', onMouseUp);
     canvas.addEventListener('wheel', onWheel);
+
+    // Keyboard Events
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+}
+
+function onKeyDown(e) {
+    if (e.code === 'Space' && (mode === 'ref' || mode === 'measure')) {
+        e.preventDefault();
+        previousMode = mode;
+        setTool('select');
+    }
+}
+
+function onKeyUp(e) {
+    if (e.code === 'Space' && mode === 'select' && previousMode !== 'select') {
+        setTool(previousMode);
+        previousMode = 'select';
+    }
 }
 
 const GAS_URL = "https://script.google.com/macros/s/AKfycbxDKV1RBlLvrYnTLqytBJKdgu_WdBMmAU03na0_8GHvTRF9DhcL38tYdQA-6sIB5jMVBw/exec";
@@ -170,6 +191,20 @@ async function loadRequestDetail(group) {
     }
 }
 
+function toggleRefLock() {
+    isRefLocked = !isRefLocked;
+    const btn = document.getElementById('lockRefBtn');
+    if (isRefLocked) {
+        btn.innerText = '🔒 기준물체 잠금됨';
+        btn.classList.replace('bg-gray-200', 'bg-green-600');
+        btn.classList.replace('text-gray-700', 'text-white');
+    } else {
+        btn.innerText = '🔓 잠금해제 상태';
+        btn.classList.replace('bg-green-600', 'bg-gray-200');
+        btn.classList.replace('text-white', 'text-gray-700');
+    }
+}
+
 // --- Smart Zoom Features ---
 function resetZoom() {
     currentScale = 1.0;
@@ -245,6 +280,9 @@ function selectImage(id) {
         fitImageToCanvas();
         refBox = null;
         measureLine = null;
+        // Reset measurement slots
+        ['w1', 'w2', 'w3', 'h1', 'h2', 'h3'].forEach(id => document.getElementById(id).value = '');
+        updateAverages();
         draw();
     };
 
@@ -350,6 +388,9 @@ function onMouseDown(e) {
     startPos = pos;
 
     if (mode === 'ref') {
+        // Prevent reset if locked
+        if (isRefLocked && refBox) return;
+
         // If not zoomed in, zoom in first to the click area
         if (currentScale < 2.0) {
             zoomToPoint(pos.x, pos.y);
@@ -434,12 +475,37 @@ function calculateRealSize() {
 
         // Simple heuristic: wider than tall -> horizontal
         if (Math.abs(dx) > Math.abs(dy)) {
-            document.getElementById('resWidth').value = finalVal;
+            // Width slot
+            if (!document.getElementById('w1').value) document.getElementById('w1').value = finalVal;
+            else if (!document.getElementById('w2').value) document.getElementById('w2').value = finalVal;
+            else document.getElementById('w3').value = finalVal;
         } else {
-            document.getElementById('resHeight').value = finalVal;
+            // Height slot
+            if (!document.getElementById('h1').value) document.getElementById('h1').value = finalVal;
+            else if (!document.getElementById('h2').value) document.getElementById('h2').value = finalVal;
+            else document.getElementById('h3').value = finalVal;
         }
+        updateAverages();
         hideLoading();
     }, 300);
+}
+
+function updateAverages() {
+    function calcAvg(ids) {
+        const vals = ids.map(id => parseFloat(document.getElementById(id).value) || 0).filter(v => v > 0);
+        if (vals.length === 0) return 0;
+        return Math.round(vals.reduce((a, b) => a + b) / vals.length);
+    }
+
+    const avgW = calcAvg(['w1', 'w2', 'w3']);
+    const avgH = calcAvg(['h1', 'h2', 'h3']);
+
+    document.getElementById('avgWidth').innerText = avgW;
+    document.getElementById('avgHeight').innerText = avgH;
+
+    // Set hidden inputs for saving
+    document.getElementById('resWidth').value = avgW;
+    document.getElementById('resHeight').value = avgH;
 }
 
 async function saveResult() {
