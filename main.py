@@ -11,6 +11,8 @@ from typing import List
 from database import SessionLocal, engine, Base, WindowRequest, WindowImage
 
 
+BASE_DIR = Path(__file__).resolve().parent
+
 app = FastAPI()
 
 # Database initialization (safe for Vercel)
@@ -26,21 +28,27 @@ async def startup():
     init_db()
 
 # Mount Static Files
-app.mount("/static", StaticFiles(directory="static"), name="static")
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+if (BASE_DIR / "static").exists():
+    app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
-# Templates
-templates = Jinja2Templates(directory="templates")
-
-# Ensure uploads directory exists
-UPLOAD_DIR = Path("uploads")
+# Only mount uploads if not on Vercel or if it exists
 if os.environ.get("VERCEL"):
     UPLOAD_DIR = Path("/tmp/uploads")
-
-try:
+    try:
+        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    except:
+        pass
+else:
+    UPLOAD_DIR = Path("uploads")
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-except Exception as e:
-    print(f"Warning: Could not create upload directory: {e}")
+
+if UPLOAD_DIR.exists():
+    app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
+
+# Templates
+templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
+# Skip redundant dir creation here as it's handled above
 
 # Dependency to get DB session
 def get_db():
