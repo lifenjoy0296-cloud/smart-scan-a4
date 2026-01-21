@@ -405,22 +405,38 @@ function calculateRealSize() {
     showLoading("치수 계산 중...");
 
     setTimeout(() => {
-        const refPx = Math.max(refBox.w, refBox.h);
-        const refRealCm = currentRefType === 'CREDIT_CARD' ? 8.56 : 29.7;
-        const pixelsPerCm = refPx / refRealCm;
+        // For better accuracy, we calculate pixels per cm using the longer dimension of the refBox
+        // (A4 is 29.7 x 21.0, Credit Card is 8.56 x 5.4)
+        let refRealLong, refRealShort;
+        if (currentRefType === 'CREDIT_CARD') {
+            refRealLong = 8.56;
+            refRealShort = 5.4;
+        } else {
+            refRealLong = 29.7;
+            refRealShort = 21.0;
+        }
+
+        // Determine if drawn refBox is horizontal or vertical to use correct side for calibration
+        const isRefHorizontal = refBox.w > refBox.h;
+        const calibPx = isRefHorizontal ? refBox.w : refBox.h;
+        const calibReal = isRefHorizontal ? refRealLong : refRealLong; // We usually align long side
+
+        // Actually, let's use the intended long side specifically
+        const pixelsPerCm = calibPx / refRealLong;
 
         const dx = measureLine.x2 - measureLine.x1;
         const dy = measureLine.y2 - measureLine.y1;
         const linePx = Math.sqrt(dx * dx + dy * dy);
 
-        // Convert to mm and round
-        const realMm = Math.round((linePx / pixelsPerCm) * 10);
+        // Convert to mm and round with decimals for precision
+        const realMm = (linePx / pixelsPerCm) * 10;
+        const finalVal = Math.round(realMm);
 
         // Simple heuristic: wider than tall -> horizontal
         if (Math.abs(dx) > Math.abs(dy)) {
-            document.getElementById('resWidth').value = realMm;
+            document.getElementById('resWidth').value = finalVal;
         } else {
-            document.getElementById('resHeight').value = realMm;
+            document.getElementById('resHeight').value = finalVal;
         }
         hideLoading();
     }, 300);

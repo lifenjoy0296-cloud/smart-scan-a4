@@ -263,8 +263,8 @@
                         btn.innerHTML = `전송 중... (${i + 1}/${imagesQueue.length})`;
                         const img = imagesQueue[i];
 
-                        // Convert Image to Base64
-                        const base64 = await toBase64(img.file);
+                        // Compress Image to Base64 (Resize for speed)
+                        const base64 = await compressAndGetBase64(img.file);
 
                         const payload = {
                             type: "CLIENT_UPLOAD",
@@ -297,11 +297,39 @@
                 }
             });
 
-            function toBase64(file) {
+            function compressAndGetBase64(file) {
                 return new Promise((resolve, reject) => {
                     const reader = new FileReader();
                     reader.readAsDataURL(file);
-                    reader.onload = () => resolve(reader.result);
+                    reader.onload = (e) => {
+                        const img = new Image();
+                        img.src = e.target.result;
+                        img.onload = () => {
+                            const canvas = document.createElement('canvas');
+                            let width = img.width;
+                            let height = img.height;
+                            const MAX_SIZE = 1600;
+
+                            if (width > height) {
+                                if (width > MAX_SIZE) {
+                                    height *= MAX_SIZE / width;
+                                    width = MAX_SIZE;
+                                }
+                            } else {
+                                if (height > MAX_SIZE) {
+                                    width *= MAX_SIZE / height;
+                                    height = MAX_SIZE;
+                                }
+                            }
+
+                            canvas.width = width;
+                            canvas.height = height;
+                            const ctx = canvas.getContext('2d');
+                            ctx.drawImage(img, 0, 0, width, height);
+                            // Compress to JPEG with 0.8 quality
+                            resolve(canvas.toDataURL('image/jpeg', 0.8));
+                        };
+                    };
                     reader.onerror = error => reject(error);
                 });
             }
