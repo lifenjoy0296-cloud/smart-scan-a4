@@ -41,19 +41,29 @@ async def read_root(request: Request):
 @app.get("/api/proxy-image")
 async def proxy_image(url: str):
     import requests
-    from fastapi import Response
+    from fastapi import Response, HTTPException
     
-    # Convert to direct link if it's a standard view link
+    # 1. Convert to direct link if it's a standard view link
+    final_url = url
     if "drive.google.com" in url:
         import re
         match = re.search(r'\/d\/(.+?)(?:\/|$|\?)', url) or re.search(r'[?&]id=(.+?)(?:&|$)', url)
         if match:
-            url = f"https://drive.google.com/uc?export=view&id={match.group(1)}"
+            final_url = f"https://drive.google.com/uc?export=view&id={match.group(1)}"
+
+    # 2. Fetch with browser-like headers
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
 
     try:
-        res = requests.get(url, timeout=10)
+        res = requests.get(final_url, headers=headers, timeout=15, allow_redirects=True)
+        if res.status_code != 200:
+            raise HTTPException(status_code=res.status_code, detail=f"Google Drive returned {res.status_code}")
+            
         return Response(content=res.content, media_type=res.headers.get("Content-Type", "image/jpeg"))
     except Exception as e:
+        print(f"Proxy Error: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/admin", response_class=HTMLResponse)
