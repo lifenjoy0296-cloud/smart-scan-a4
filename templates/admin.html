@@ -93,7 +93,15 @@
                 <div class="flex flex-1 overflow-hidden">
                     <!-- Canvas Area -->
                     <div class="flex-1 bg-gray-800 overflow-hidden relative" id="canvasContainer">
-                        <canvas id="editorCanvas"></canvas>
+                        <!-- Loading Spinner Overlay -->
+                        <div id="imageLoadingOverlay"
+                            class="hidden absolute inset-0 z-50 flex flex-col items-center justify-center bg-slate-900 bg-opacity-70 text-white">
+                            <div
+                                class="animate-spin rounded-full h-12 w-12 border-4 border-blue-500 border-t-transparent mb-4">
+                            </div>
+                            <p class="text-sm font-medium">사진 불러오는 중...</p>
+                        </div>
+                        <canvas id="editorCanvas" class="max-w-full max-h-full"></canvas>
                     </div>
 
                     <!-- Right Panel (Info & Result) -->

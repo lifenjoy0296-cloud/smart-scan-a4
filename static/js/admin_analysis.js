@@ -37,7 +37,7 @@ function init() {
     canvas.addEventListener('wheel', onWheel);
 }
 
-const GAS_URL = "https://script.google.com/macros/s/AKfycbw6BegCSyKPd0MeKSfZ3VN9srGgtsMd-3I1bakSQjpI0wi8fHMgrHwVEJ9wYGB9RPq6IQ/exec";
+const GAS_URL = "https://script.google.com/macros/s/AKfycbxX01j0sgpIp7RYQSAjfIXcrmKAw9B_sIpdZM9UkM0yziMd5M4qAOxYa8VN-TP9RcZlHw/exec";
 
 async function loadRequests() {
     const list = document.getElementById('requestList');
@@ -112,6 +112,17 @@ function renderGallery() {
     });
 }
 
+// Helper to control loading overlay
+function showLoading(msg = "사진 불러오는 중...") {
+    const overlay = document.getElementById('imageLoadingOverlay');
+    overlay.querySelector('p').innerText = msg;
+    overlay.classList.remove('hidden');
+}
+
+function hideLoading() {
+    document.getElementById('imageLoadingOverlay').classList.add('hidden');
+}
+
 function selectImage(id) {
     selectedImageId = id;
     const imgData = currentImages.find(i => i.id === id);
@@ -128,15 +139,14 @@ function selectImage(id) {
     const directUrl = getDirectDriveUrl(imgData.image_path);
     console.log("Loading Image URL:", directUrl);
 
-    // Show loading indicator
-    document.getElementById('imageLoadingOverlay').classList.remove('hidden');
+    showLoading("사진 불러오는 중...");
 
     img.crossOrigin = "anonymous";
     img.src = directUrl;
 
     img.onload = () => {
         console.log("Image loaded successfully with CORS");
-        document.getElementById('imageLoadingOverlay').classList.add('hidden');
+        hideLoading();
         currentImage = img;
         resizeCanvas();
         fitImageToCanvas();
@@ -147,11 +157,11 @@ function selectImage(id) {
 
     img.onerror = () => {
         console.warn("Image load failed with CORS. Trying fallback...");
-        document.getElementById('imageLoadingOverlay').classList.add('hidden');
         const fallbackImg = new Image();
         fallbackImg.src = directUrl;
         fallbackImg.onload = () => {
             console.log("Image loaded (CORS Fallback)");
+            hideLoading();
             currentImage = fallbackImg;
             resizeCanvas();
             fitImageToCanvas();
@@ -159,6 +169,7 @@ function selectImage(id) {
         };
         fallbackImg.onerror = () => {
             console.error("Critical Image Failure:", directUrl);
+            hideLoading();
             alert("이미지를 불러올 수 없습니다. 구글 드라이브의 '링크 공유'가 '모든 사용자에게 공개'로 되어 있는지 확인해 주세요.");
         };
     };
@@ -288,23 +299,28 @@ function calculateRealSize() {
         return;
     }
 
-    const refPx = Math.max(refBox.w, refBox.h);
-    const refRealCm = currentRefType === 'CREDIT_CARD' ? 8.56 : 29.7;
-    const pixelsPerCm = refPx / refRealCm;
+    showLoading("치수 계산 중...");
 
-    const dx = measureLine.x2 - measureLine.x1;
-    const dy = measureLine.y2 - measureLine.y1;
-    const linePx = Math.sqrt(dx * dx + dy * dy);
+    setTimeout(() => {
+        const refPx = Math.max(refBox.w, refBox.h);
+        const refRealCm = currentRefType === 'CREDIT_CARD' ? 8.56 : 29.7;
+        const pixelsPerCm = refPx / refRealCm;
 
-    // Convert to mm and round
-    const realMm = Math.round((linePx / pixelsPerCm) * 10);
+        const dx = measureLine.x2 - measureLine.x1;
+        const dy = measureLine.y2 - measureLine.y1;
+        const linePx = Math.sqrt(dx * dx + dy * dy);
 
-    // Simple heuristic: wider than tall -> horizontal
-    if (Math.abs(dx) > Math.abs(dy)) {
-        document.getElementById('resWidth').value = realMm;
-    } else {
-        document.getElementById('resHeight').value = realMm;
-    }
+        // Convert to mm and round
+        const realMm = Math.round((linePx / pixelsPerCm) * 10);
+
+        // Simple heuristic: wider than tall -> horizontal
+        if (Math.abs(dx) > Math.abs(dy)) {
+            document.getElementById('resWidth').value = realMm;
+        } else {
+            document.getElementById('resHeight').value = realMm;
+        }
+        hideLoading();
+    }, 300);
 }
 
 async function saveResult() {
@@ -313,12 +329,14 @@ async function saveResult() {
     const currentImgData = currentImages.find(i => i.id === selectedImageId);
     if (!currentImgData) return;
 
-    const GAS_URL = "https://script.google.com/macros/s/AKfycbw6BegCSyKPd0MeKSfZ3VN9srGgtsMd-3I1bakSQjpI0wi8fHMgrHwVEJ9wYGB9RPq6IQ/exec";
+    const GAS_URL = "https://script.google.com/macros/s/AKfycbxX01j0sgpIp7RYQSAjfIXcrmKAw9B_sIpdZM9UkM0yziMd5M4qAOxYa8VN-TP9RcZlHw/exec";
 
     // Overall request info label from UI
     const namePhone = document.getElementById('infoNamePhone').innerText.split(' / ');
     const name = namePhone[0];
     const phone = namePhone[1];
+
+    showLoading("데이터 저장 중...");
 
     const payload = {
         type: "ADMIN_SAVE",
@@ -344,10 +362,12 @@ async function saveResult() {
         localFormData.append('status', payload.status);
         await fetch(`/api/update_request/${currentRequestId}`, { method: 'POST', body: localFormData });
 
+        hideLoading();
         alert("구글 시트 저장 및 파일명 변경이 완료되었습니다.");
         loadRequests();
     } catch (e) {
         console.error(e);
+        hideLoading();
         alert("저장 중 오류가 발생했습니다.");
     }
 }
@@ -355,10 +375,7 @@ async function saveResult() {
 async function autoDetect() {
     if (!selectedImageId) return;
 
-    const btn = document.querySelector('button[onclick="autoDetect()"]');
-    const originalText = btn.innerHTML;
-    btn.innerHTML = '분석 중...';
-    btn.disabled = true;
+    showLoading("AI 자동분석 중...");
 
     try {
         const res = await fetch(`/api/analyze/${selectedImageId}`, { method: 'POST' });
@@ -372,16 +389,16 @@ async function autoDetect() {
                 h: data.box.h
             };
             draw();
+            hideLoading();
             alert("기준 물체가 감지되었습니다.");
         } else {
+            hideLoading();
             alert("자동 감지 실패: 직접 그려주세요.");
         }
     } catch (e) {
         console.error(e);
+        hideLoading();
         alert("분석 중 오류가 발생했습니다.");
-    } finally {
-        btn.innerHTML = originalText;
-        btn.disabled = false;
     }
 }
 
