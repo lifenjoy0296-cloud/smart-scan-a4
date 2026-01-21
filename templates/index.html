@@ -270,8 +270,9 @@
                             name: name,
                             phone: phone,
                             location: img.loc,
-                            reference_type: img.ref,
-                            image_base64: base64
+                            refType: img.ref,
+                            image: base64,
+                            filename: `upload_${Date.now()}.jpg`
                         };
 
                         const response = await fetch(GAS_URL, {
