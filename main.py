@@ -233,18 +233,14 @@ async def analyze_request(image_id: int, db: Session = Depends(get_db)):
 @app.post("/api/update_request/{request_id}")
 async def update_request(
     request_id: int,
-    width: float = Form(None),
-    height: float = Form(None),
     memo: str = Form(None),
     status: str = Form(None),
     db: Session = Depends(get_db)
 ):
     req = db.query(WindowRequest).filter(WindowRequest.id == request_id).first()
     if not req:
-        raise HTTPException(status_code=404, message="Request not found")
+        raise HTTPException(status_code=404, detail="Request not found")
     
-    if width is not None: req.width = width
-    if height is not None: req.height = height
     if memo is not None: req.memo = memo
     if status is not None: req.status = status
     

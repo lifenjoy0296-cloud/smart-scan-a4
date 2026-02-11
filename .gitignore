@@ -6,3 +6,4 @@ uploads/*
 !.gitkeep
 .vscode/
 .vercel/
+.vercel

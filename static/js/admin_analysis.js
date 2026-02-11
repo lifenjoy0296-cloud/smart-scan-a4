@@ -19,115 +19,59 @@ let currentRefType = 'A4';
 let currentImages = []; // List of image objects
 let selectedImageId = null;
 
+// Helper to get a fast thumbnail URL from Google Drive ID
+function getThumbnailUrl(url_or_id) {
+    if (!url_or_id) return '';
+    let id = url_or_id;
+    // Extract ID if it's a full URL
+    if (url_or_id.includes('id=')) {
+        id = url_or_id.split('id=')[1].split('&')[0];
+    } else if (url_or_id.includes('/d/')) {
+        id = url_or_id.split('/d/')[1].split('/')[0];
+    }
+    // Google Drive native thumbnail endpoint (sz=w200 for 200px width)
+    return `https://drive.google.com/thumbnail?id=${id}&sz=w200`;
+}
+
 // Helper to convert Google Drive Link to a Proxy Link through our server
-function getDirectDriveUrl(url) {
-    if (!url || typeof url !== 'string') return '';
-    // Use our server-side proxy to bypass Google Drive's CORS/Loading issues
-    return `/api/proxy-image?url=${encodeURIComponent(url)}`;
-}
+const CONVEX_URL = "https://your-convex-app-url.convex.cloud"; // USER: Same as index.html
+let convexClient;
 
-// Init
-function init() {
-    loadRequests();
-    resizeCanvas();
-    window.addEventListener('resize', resizeCanvas);
-
-    // Mouse Events
-    canvas.addEventListener('mousedown', onMouseDown);
-    canvas.addEventListener('mousemove', onMouseMove);
-    canvas.addEventListener('mouseup', onMouseUp);
-    canvas.addEventListener('wheel', onWheel);
-
-    // Keyboard Events
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('keyup', onKeyUp);
-}
-
-function onKeyDown(e) {
-    if (e.code === 'Space' && (mode === 'ref' || mode === 'measure')) {
-        e.preventDefault();
-        previousMode = mode;
-        setTool('select');
-    }
-}
-
-function onKeyUp(e) {
-    if (e.code === 'Space' && mode === 'select' && previousMode !== 'select') {
-        setTool(previousMode);
-        previousMode = 'select';
-    }
-}
-
-const GAS_URL = "https://script.google.com/macros/s/AKfycbxDKV1RBlLvrYnTLqytBJKdgu_WdBMmAU03na0_8GHvTRF9DhcL38tYdQA-6sIB5jMVBw/exec";
-
-// Helper to find value from object even if key name is slightly different
-function findVal(obj, keys) {
-    if (!obj) return null;
-    for (let key of keys) {
-        if (obj[key] !== undefined && obj[key] !== null && obj[key] !== "") return obj[key];
-    }
-    // Deep search (case-insensitive substring match)
-    const objKeys = Object.keys(obj);
-    for (let k of objKeys) {
-        for (let target of keys) {
-            if (k.toLowerCase().includes(target.toLowerCase()) || target.toLowerCase().includes(k.toLowerCase())) {
-                if (obj[k] !== undefined && obj[k] !== null && obj[k] !== "") return obj[k];
-            }
-        }
-    }
-    return null;
-}
-
-const NAME_KEYS = ["customer_name", "성함", "이름", "고객명", "고객"];
-const PHONE_KEYS = ["phone", "연락처", "전화번호", "휴대폰"];
-const LOC_KEYS = ["location_type", "시공위치", "위치", "장소"];
-const REF_KEYS = ["reference_type", "기준물체 종류", "기준", "기준물체"];
-const STATUS_KEYS = ["status", "상태", "진행상태"];
-const IMG_KEYS = ["image_path", "구글 드라이브 파일 링크", "사진", "이미지", "파일링크", "drive"];
-const MEMO_KEYS = ["memo", "메모", "특이사항"];
-const DATE_KEYS = ["created_at", "날짜", "등록일"];
-
-let allRawData = []; // To store ungrouped data for lookup
-
-async function loadRequests() {
-    const list = document.getElementById('requestList');
+async function initConvex() {
     try {
-        const timestamp = new Date().getTime();
-        const fetchUrl = `${GAS_URL}?t=${timestamp}`;
-        console.log("Fetching from GAS (Cache-busting):", fetchUrl);
-        const res = await fetch(fetchUrl);
-        const data = await res.json();
-        allRawData = data;
-        console.log("GAS JSON Data:", data);
+        const { ConvexClient } = await import("https://unpkg.com/convex@1.11.0/dist/browser/index.js");
+        convexClient = new ConvexClient(CONVEX_URL);
+        console.log("Admin: Convex Client Initialized");
+        loadRequestsConvex(); // Use Convex loading
+    } catch (err) {
+        console.error("Failed to load Convex:", err);
+    }
+}
+
+// Redirect old init to new init
+const originalInit = init;
+init = function () {
+    originalInit();
+    initConvex();
+};
+
+async function loadRequestsConvex() {
+    if (!convexClient) return;
+    const list = document.getElementById('requestList');
+
+    // Use Convex watch query if possible, or simple query
+    try {
+        // For simplicity in this script, we'll fetch once or subscribe
+        const requests = await convexClient.query("requests:list");
+        console.log("Convex Data:", requests);
 
         list.innerHTML = '';
 
-        // Grouping Logic: Group by Name + Phone + Date(minute level)
-        const groups = {};
-        data.forEach(req => {
-            const name = findVal(req, NAME_KEYS) || "이름없음";
-            const phone = findVal(req, PHONE_KEYS) || "000";
-            const date = new Date(findVal(req, DATE_KEYS));
-            // Group by name, phone and same 5-minute window
-            const timeKey = `${date.getFullYear()}${date.getMonth()}${date.getDate()}${date.getHours()}${Math.floor(date.getMinutes() / 5)}`;
-            const groupKey = `${name}_${phone}_${timeKey}`;
-
-            if (!groups[groupKey]) {
-                groups[groupKey] = {
-                    info: req,
-                    images: []
-                };
-            }
-            groups[groupKey].images.push(req);
-        });
-
-        Object.values(groups).forEach((group, index) => {
-            const req = group.info;
-            const name = findVal(req, NAME_KEYS) || "이름없음";
-            const location = findVal(req, LOC_KEYS) || "위치없음";
-            const status = findVal(req, STATUS_KEYS) || "자료업로드";
-            const dateStr = findVal(req, DATE_KEYS) || new Date();
-            const imgCount = group.images.length;
+        requests.forEach((req, index) => {
+            const name = req.customer_name || "이름없음";
+            const status = req.status || "자료업로드";
+            const dateStr = req.createdAt;
+            const imgCount = req.imageCount || 0;
 
             const li = document.createElement('li');
             li.className = 'p-4 hover:bg-blue-50 cursor-pointer border-b transition-colors';
@@ -135,21 +79,103 @@ async function loadRequests() {
                 <div class="flex justify-between items-start">
                     <div>
                         <p class="font-bold text-gray-800">${name} <span class="text-blue-500 text-xs">[${imgCount}]</span></p>
-                        <p class="text-xs text-gray-500">${location} 외</p>
+                        <p class="text-xs text-gray-500">접수번호: ${req._id.substring(0, 8)}</p>
                     </div>
                     <span class="text-xs px-2 py-1 rounded-full ${getStatusColor(status)}">${status}</span>
                 </div>
                 <p class="text-xs text-gray-400 mt-1">${new Date(dateStr).toLocaleString()}</p>
             `;
-            li.onclick = () => loadRequestDetail(group);
+            li.onclick = () => loadRequestDetailConvex(req._id);
             list.appendChild(li);
 
             if (index === 0 && !selectedImageId) {
-                loadRequestDetail(group);
+                loadRequestDetailConvex(req._id);
             }
         });
-    } catch (e) {
-        console.error("Data Load Error:", e);
+    } catch (err) {
+        console.error("Convex Load Error:", err);
+    }
+}
+
+async function loadRequestDetailConvex(requestId) {
+    if (!convexClient) return;
+    currentRequestId = requestId;
+    document.getElementById('emptyState').classList.add('hidden');
+    document.getElementById('workspace').classList.remove('hidden');
+
+    const data = await convexClient.query("requests:getDetail", { requestId });
+    if (!data) return;
+
+    document.getElementById('infoNamePhone').innerText = `${data.customer_name} / ${data.phone}`;
+    document.getElementById('statusSelect').value = data.status;
+    document.getElementById('memoText').value = data.memo || "";
+
+    currentImages = data.images.map(img => ({
+        id: img._id,
+        image_path: img.url, // Convex URL
+        location_type: img.location,
+        reference_type: img.refType,
+        width: img.width || 0,
+        height: img.height || 0
+    }));
+
+    renderGallery();
+    if (currentImages.length > 0) {
+        selectImage(currentImages[0].id);
+    }
+}
+
+// Redirect old save
+async function saveResult() {
+    if (!currentRequestId || !selectedImageId || !convexClient) return;
+
+    showLoading("데이터 저장 중...");
+
+    try {
+        const status = document.getElementById('statusSelect').value;
+        const memo = document.getElementById('memoText').value;
+        const width = parseFloat(document.getElementById('resWidth').value);
+        const height = parseFloat(document.getElementById('resHeight').value);
+
+        // 1. Update Request
+        await convexClient.mutation("requests:updateStatus", {
+            requestId: currentRequestId,
+            status,
+            memo
+        });
+
+        // 2. Update Image Result
+        await convexClient.mutation("images:updateImageResult", {
+            imageId: selectedImageId,
+            width,
+            height
+        });
+
+        hideLoading();
+        alert("분석 결과가 저장되었습니다. (Convex)");
+        loadRequestsConvex();
+    } catch (err) {
+        console.error(err);
+        hideLoading();
+        alert("저장 중 오류가 발생했습니다.");
+    }
+}
+
+async function autoDetect() {
+    if (!selectedImageId || !convexClient) return;
+    showLoading("AI 자동분석 중...");
+    try {
+        const data = await convexClient.action("images:analyzeImage", { imageId: selectedImageId });
+        if (data.success && data.box) {
+            refBox = data.box;
+            draw();
+            hideLoading();
+            alert("기준 물체가 감지되었습니다.");
+        }
+    } catch (err) {
+        console.error(err);
+        hideLoading();
+        alert("분석 실패.");
     }
 }
 
@@ -177,12 +203,12 @@ async function loadRequestDetail(group) {
 
     // Load multiple images from the group
     currentImages = group.images.map(img => ({
-        id: img.id,
+        id: findVal(img, ID_KEYS) || img.id,
         image_path: findVal(img, IMG_KEYS),
         location_type: findVal(img, LOC_KEYS),
         reference_type: findVal(img, REF_KEYS),
-        width: img.width || img["가로 mm"] || 0,
-        height: img.height || img["세로 mm"] || 0
+        width: findVal(img, WIDTH_KEYS) || 0,
+        height: findVal(img, HEIGHT_KEYS) || 0
     }));
 
     renderGallery();
@@ -229,12 +255,18 @@ function zoomToPoint(targetX, targetY) {
 function renderGallery() {
     const gallery = document.getElementById('imageGallery');
     gallery.innerHTML = '';
+
     currentImages.forEach(img => {
         const thumb = document.createElement('div');
         const isSelected = img.id === selectedImageId;
-        thumb.className = `flex-shrink-0 w-20 h-20 rounded border-2 cursor-pointer transition-all overflow-hidden ${isSelected ? 'border-blue-500 scale-105' : 'border-transparent opacity-60 hover:opacity-100'}`;
-        const directUrl = getDirectDriveUrl(img.image_path);
-        thumb.innerHTML = `<img src="${directUrl}" class="w-full h-full object-cover">`;
+        thumb.className = `flex-shrink-0 w-20 h-20 rounded border-2 cursor-pointer transition-all overflow-hidden bg-gray-200 ${isSelected ? 'border-blue-500 scale-105' : 'border-transparent opacity-70 hover:opacity-100'}`;
+
+        // Use fast thumbnail instead of proxied full image for gallery
+        const thumbUrl = getThumbnailUrl(img.image_path);
+        const directUrl = getDirectDriveUrl(img.image_path); // Fallback if thumbnail fails
+
+        thumb.innerHTML = `<img src="${thumbUrl}" class="w-full h-full object-cover" loading="lazy" onerror="this.onerror=null; this.src='${directUrl}';">`;
+
         thumb.onclick = () => selectImage(img.id);
         gallery.appendChild(thumb);
     });
@@ -258,14 +290,11 @@ function selectImage(id) {
 
     // Update Image Info
     document.getElementById('infoLocationRef').innerText = `${imgData.location_type} / ${imgData.reference_type}`;
-    document.getElementById('resWidth').value = imgData.width || '';
-    document.getElementById('resHeight').value = imgData.height || '';
     currentRefType = imgData.reference_type;
 
     // Reset Canvas & Load Image
     const img = new Image();
     const directUrl = getDirectDriveUrl(imgData.image_path);
-    console.log("Loading Image URL:", directUrl);
 
     showLoading("사진 불러오는 중...");
 
@@ -273,25 +302,28 @@ function selectImage(id) {
     img.src = directUrl;
 
     img.onload = () => {
-        console.log("Image loaded successfully with CORS");
         hideLoading();
         currentImage = img;
         resizeCanvas();
         fitImageToCanvas();
+
         refBox = null;
         measureLine = null;
-        // Reset measurement slots
+
+        // Populate existing measurements if available
         ['w1', 'w2', 'w3', 'h1', 'h2', 'h3'].forEach(id => document.getElementById(id).value = '');
+
+        if (imgData.width && imgData.width > 0) document.getElementById('w1').value = imgData.width;
+        if (imgData.height && imgData.height > 0) document.getElementById('h1').value = imgData.height;
+
         updateAverages();
         draw();
     };
 
     img.onerror = () => {
-        console.warn("Image load failed with CORS. Trying fallback...");
         const fallbackImg = new Image();
         fallbackImg.src = directUrl;
         fallbackImg.onload = () => {
-            console.log("Image loaded (CORS Fallback)");
             hideLoading();
             currentImage = fallbackImg;
             resizeCanvas();
@@ -299,9 +331,8 @@ function selectImage(id) {
             draw();
         };
         fallbackImg.onerror = () => {
-            console.error("Critical Image Failure:", directUrl);
             hideLoading();
-            alert("이미지를 불러올 수 없습니다. 구글 드라이브의 '링크 공유'가 '모든 사용자에게 공개'로 되어 있는지 확인해 주세요.");
+            alert("이미지를 불러올 수 없습니다.");
         };
     };
     renderGallery();
@@ -324,40 +355,47 @@ function fitImageToCanvas() {
 
 // Drawing Logic
 function draw() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
     if (!currentImage) return;
+
+    // Clear and draw background
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#1e293b"; // Slate-800
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     ctx.save();
     ctx.translate(offset.x, offset.y);
     ctx.scale(currentScale, currentScale);
 
+    // 1. Draw Image
     ctx.drawImage(currentImage, 0, 0);
 
-    // Draw Ref Box (Green)
+    // 2. Draw Reference Box
     if (refBox) {
-        ctx.strokeStyle = '#00FF00';
+        ctx.strokeStyle = '#22c55e'; // Green-500
         ctx.lineWidth = 3 / currentScale;
         ctx.strokeRect(refBox.x, refBox.y, refBox.w, refBox.h);
-        ctx.fillStyle = 'rgba(0, 255, 0, 0.2)';
+        ctx.fillStyle = 'rgba(34, 197, 94, 0.2)';
         ctx.fillRect(refBox.x, refBox.y, refBox.w, refBox.h);
     }
 
-    // Draw Measure Line (Red)
+    // 3. Draw Measurement Line
     if (measureLine) {
-        ctx.strokeStyle = '#FF0000';
+        ctx.strokeStyle = '#ef4444'; // Red-500
         ctx.lineWidth = 3 / currentScale;
         ctx.beginPath();
         ctx.moveTo(measureLine.x1, measureLine.y1);
         ctx.lineTo(measureLine.x2, measureLine.y2);
         ctx.stroke();
 
-        ctx.fillStyle = '#FF0000';
+        ctx.fillStyle = '#ef4444';
         ctx.beginPath();
         ctx.arc(measureLine.x1, measureLine.y1, 5 / currentScale, 0, Math.PI * 2);
         ctx.arc(measureLine.x2, measureLine.y2, 5 / currentScale, 0, Math.PI * 2);
         ctx.fill();
     }
+
+    // 4. Visual Overlays (Always show Info, show Dimensions if available)
+    drawOverlaysToCtx(ctx, canvas.width, canvas.height, true);
 
     ctx.restore();
 }
@@ -368,6 +406,7 @@ function setTool(t) {
     document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('ring-2', 'ring-blue-500'));
     const btn = document.querySelector(`[data-tool="${t}"]`);
     if (btn) btn.classList.add('ring-2', 'ring-blue-500');
+    hideFloatingBtn();
 }
 
 function getMousePos(e) {
@@ -399,6 +438,7 @@ function onMouseDown(e) {
         }
         refBox = { x: pos.x, y: pos.y, w: 0, h: 0 };
     } else if (mode === 'measure') {
+        hideFloatingBtn();
         measureLine = { x1: pos.x, y1: pos.y, x2: pos.x, y2: pos.y };
     }
 }
@@ -426,7 +466,40 @@ function onMouseUp(e) {
         if (refBox.w < 0) { refBox.x += refBox.w; refBox.w = Math.abs(refBox.w); }
         if (refBox.h < 0) { refBox.y += refBox.h; refBox.h = Math.abs(refBox.h); }
     }
+
+    if (mode === 'measure' && measureLine) {
+        // Show floating button at mouse position
+        showFloatingBtn(e.clientX, e.clientY);
+    }
+
     draw();
+}
+
+function showFloatingBtn(x, y) {
+    const btn = document.getElementById('floatingCalcBtn');
+    if (!btn) return;
+
+    // Convert viewport coordinates to container-relative coordinates
+    const rect = container.getBoundingClientRect();
+    let relX = x - rect.left;
+    let relY = y - rect.top;
+
+    // Add some offset so it doesn't block the end point
+    relX += 15;
+    relY += 15;
+
+    // Keep within container bounds
+    if (relX + 100 > rect.width) relX -= 120; // Flip left if too far right
+    if (relY + 40 > rect.height) relY -= 60;  // Flip up if too far down
+
+    btn.style.left = relX + 'px';
+    btn.style.top = relY + 'px';
+    btn.classList.remove('hidden');
+}
+
+function hideFloatingBtn() {
+    const btn = document.getElementById('floatingCalcBtn');
+    if (btn) btn.classList.add('hidden');
 }
 
 function onWheel(e) {
@@ -491,8 +564,15 @@ function calculateRealSize() {
 }
 
 function updateAverages() {
+    function parseToNumber(val) {
+        if (!val) return 0;
+        // Strip commas, units, and non-numeric chars for safe calculation
+        const clean = String(val).replace(/,/g, '').replace(/[a-zA-Z가-힣]/g, '').trim();
+        return parseFloat(clean) || 0;
+    }
+
     function calcAvg(ids) {
-        const vals = ids.map(id => parseFloat(document.getElementById(id).value) || 0).filter(v => v > 0);
+        const vals = ids.map(id => parseToNumber(document.getElementById(id).value)).filter(v => v > 0);
         if (vals.length === 0) return 0;
         return Math.round(vals.reduce((a, b) => a + b) / vals.length);
     }
@@ -506,6 +586,9 @@ function updateAverages() {
     // Set hidden inputs for saving
     document.getElementById('resWidth').value = avgW;
     document.getElementById('resHeight').value = avgH;
+
+    // Redraw to reflect changes in overlay info box
+    draw();
 }
 
 async function saveResult() {
@@ -514,7 +597,8 @@ async function saveResult() {
     const currentImgData = currentImages.find(i => i.id === selectedImageId);
     if (!currentImgData) return;
 
-    const GAS_URL = "https://script.google.com/macros/s/AKfycbxX01j0sgpIp7RYQSAjfIXcrmKAw9B_sIpdZM9UkM0yziMd5M4qAOxYa8VN-TP9RcZlHw/exec";
+    // Use the global GAS_URL or ensure it matches
+    // const GAS_URL = ...; // Removed duplicate local declaration
 
     // Overall request info label from UI
     const namePhone = document.getElementById('infoNamePhone').innerText.split(' / ');
@@ -525,6 +609,7 @@ async function saveResult() {
 
     const payload = {
         type: "ADMIN_SAVE",
+        id: selectedImageId, // Crucial: unique identity for the specific row
         name: name,
         phone: phone,
         location: currentImgData.location_type,
@@ -535,21 +620,55 @@ async function saveResult() {
     };
 
     try {
-        await fetch(GAS_URL, {
+        // 1. Update Google Sheets (Async)
+        fetch(GAS_URL, {
             method: 'POST',
             mode: 'no-cors',
             body: JSON.stringify(payload)
         });
 
-        // Also update local DB for persistence during current session
-        const localFormData = new FormData();
-        localFormData.append('memo', payload.memo);
-        localFormData.append('status', payload.status);
-        await fetch(`/api/update_request/${currentRequestId}`, { method: 'POST', body: localFormData });
+        // 2. Immediately update local memory for current session persistence
+        const imgEntry = currentImages.find(i => i.id === selectedImageId);
+        if (imgEntry) {
+            imgEntry.width = payload.width;
+            imgEntry.height = payload.height;
+        }
+
+        // Also update allRawData for consistency when re-selecting the group
+        const rawEntry = allRawData.find(r => (findVal(r, ID_KEYS) || r.id) === selectedImageId);
+        if (rawEntry) {
+            rawEntry["가로 mm"] = payload.width;
+            rawEntry["width"] = payload.width;
+            rawEntry["세로 mm"] = payload.height;
+            rawEntry["height"] = payload.height;
+            rawEntry["status"] = payload.status;
+            rawEntry["상태"] = payload.status;
+            rawEntry["memo"] = payload.memo;
+            rawEntry["메모"] = payload.memo;
+        }
+
+        // 3. Update local DB (FastAPI)
+        const requestFormData = new FormData();
+        requestFormData.append('memo', payload.memo);
+        requestFormData.append('status', payload.status);
+        fetch(`/api/update_request/${currentRequestId}`, { method: 'POST', body: requestFormData });
+
+        const imageFormData = new FormData();
+        imageFormData.append('width', payload.width);
+        imageFormData.append('height', payload.height);
+
+        try {
+            await fetch(`/api/save_image_result/${selectedImageId}`, { method: 'POST', body: imageFormData });
+        } catch (localErr) {
+            console.warn("Local image update failed:", localErr);
+        }
 
         hideLoading();
-        alert("구글 시트 저장 및 파일명 변경이 완료되었습니다.");
-        loadRequests();
+        alert("분석 결과가 저장되었습니다.");
+
+        // Refresh after a short delay to give GAS time to settle
+        setTimeout(loadRequests, 1500);
+
     } catch (e) {
         console.error(e);
         hideLoading();
@@ -584,6 +703,146 @@ async function autoDetect() {
         console.error(e);
         hideLoading();
         alert("분석 중 오류가 발생했습니다.");
+    }
+}
+
+async function resetAnalysis() {
+    if (!confirm("모든 측정 데이터와 분석 결과를 초기화하시겠습니까? (저장 전 상태로 되돌아갑니다)")) return;
+
+    refBox = null;
+    measureLine = null;
+    ['w1', 'w2', 'w3', 'h1', 'h2', 'h3'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('resWidth').value = '0';
+    document.getElementById('resHeight').value = '0';
+    updateAverages();
+    draw();
+}
+
+/**
+ * Helper to draw all overlays (Info box, Dimensions, etc.) on any context (Canvas or Export)
+ */
+function drawOverlaysToCtx(targetCtx, w, h, isLive = false) {
+    const namePhone = document.getElementById('infoNamePhone').innerText;
+    const locRef = document.getElementById('infoLocationRef').innerText;
+    const avgW = document.getElementById('resWidth').value;
+    const avgH = document.getElementById('resHeight').value;
+
+    if (!namePhone || namePhone === "-") return;
+
+    targetCtx.save();
+
+    // Scale factors for live vs export
+    const scale = isLive ? (1 / currentScale) : (w / 1200); // Normalize scale based on reference width
+    const fontSize = (isLive ? 16 : 30) * scale;
+
+    targetCtx.shadowColor = "rgba(0,0,0,0.5)";
+    targetCtx.shadowBlur = 5 * scale;
+
+    // 1. Info Box (Top Left)
+    const infoX = 20 * scale;
+    const infoY = 40 * scale;
+    targetCtx.font = `bold ${fontSize}px sans-serif`;
+
+    const dimTextTop = `${parseFloat(avgW) > 0 ? '가로: ' + parseFloat(avgW).toLocaleString() + 'mm' : ''} ${parseFloat(avgH) > 0 ? '세로: ' + parseFloat(avgH).toLocaleString() + 'mm' : ''}`.trim();
+    const lines = [namePhone, locRef];
+    if (dimTextTop) lines.push(dimTextTop);
+
+    const boxWidth = Math.max(...lines.map(l => targetCtx.measureText(l).width)) + (20 * scale);
+    const boxHeight = fontSize * (lines.length * 1.35); // Precise height based on number of lines
+
+    targetCtx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    targetCtx.fillRect(infoX - (8 * scale), infoY - fontSize * 1.1, boxWidth, boxHeight);
+
+    targetCtx.fillStyle = 'white';
+    targetCtx.fillText(namePhone, infoX, infoY);
+    targetCtx.font = `${fontSize * 0.8}px sans-serif`;
+    targetCtx.fillText(locRef, infoX, infoY + (fontSize * 1.2));
+
+    if (dimTextTop) {
+        targetCtx.fillStyle = '#60a5fa'; // Light blue for dimensions
+        targetCtx.fillText(dimTextTop, infoX, infoY + (fontSize * 2.3));
+    }
+
+    // 2. Reference Box (If exists)
+    if (refBox) {
+        targetCtx.strokeStyle = '#22c55e';
+        targetCtx.lineWidth = 3 * scale;
+        targetCtx.strokeRect(refBox.x, refBox.y, refBox.w, refBox.h);
+    }
+
+    // 3. Measurement Results (Center)
+    if (measureLine && (parseFloat(avgW) > 0 || parseFloat(avgH) > 0)) {
+        // Draw the line too if exporting
+        if (!isLive) {
+            targetCtx.strokeStyle = '#ef4444';
+            targetCtx.lineWidth = 5 * scale;
+            targetCtx.beginPath();
+            targetCtx.moveTo(measureLine.x1, measureLine.y1);
+            targetCtx.lineTo(measureLine.x2, measureLine.y2);
+            targetCtx.stroke();
+        }
+
+        const midX = (measureLine.x1 + measureLine.x2) / 2;
+        const midY = (measureLine.y1 + measureLine.y2) / 2;
+
+        const dimFontSize = fontSize * 1.5;
+        targetCtx.font = `bold ${dimFontSize}px sans-serif`;
+        const dimText = `${parseFloat(avgW) > 0 ? '가로: ' + parseFloat(avgW).toLocaleString() + 'mm' : ''} ${parseFloat(avgH) > 0 ? '세로: ' + parseFloat(avgH).toLocaleString() + 'mm' : ''}`;
+
+        const txtWidth = targetCtx.measureText(dimText).width;
+        targetCtx.fillStyle = 'rgba(239, 68, 68, 0.9)';
+        targetCtx.fillRect(midX - (txtWidth / 2) - (15 * scale), midY - (dimFontSize / 2) - (5 * scale), txtWidth + (30 * scale), dimFontSize + (10 * scale));
+
+        targetCtx.fillStyle = 'white';
+        targetCtx.textAlign = 'center';
+        targetCtx.fillText(dimText, midX, midY + (dimFontSize / 3));
+        targetCtx.textAlign = 'start';
+    }
+
+    targetCtx.restore();
+}
+
+function downloadImage() {
+    if (!currentImage) return;
+
+    const exportCanvas = document.createElement('canvas');
+    exportCanvas.width = currentImage.width;
+    exportCanvas.height = currentImage.height;
+    const eCtx = exportCanvas.getContext('2d');
+
+    eCtx.drawImage(currentImage, 0, 0);
+    drawOverlaysToCtx(eCtx, currentImage.width, currentImage.height, false);
+
+    const link = document.createElement('a');
+    const namePhone = document.getElementById('infoNamePhone').innerText;
+    const safeName = namePhone.replace(/[/\\?%*:|"<>]/g, '_');
+    link.download = `분석결과_${safeName}.png`;
+    link.href = exportCanvas.toDataURL('image/png');
+    link.click();
+}
+
+/**
+ * Copy canvas image to clipboard
+ */
+async function copyImageToClipboard() {
+    if (!currentImage) return;
+
+    const exportCanvas = document.createElement('canvas');
+    exportCanvas.width = currentImage.width;
+    exportCanvas.height = currentImage.height;
+    const eCtx = exportCanvas.getContext('2d');
+
+    eCtx.drawImage(currentImage, 0, 0);
+    drawOverlaysToCtx(eCtx, currentImage.width, currentImage.height, false);
+
+    try {
+        const blob = await new Promise(resolve => exportCanvas.toBlob(resolve, 'image/png'));
+        const item = new ClipboardItem({ 'image/png': blob });
+        await navigator.clipboard.write([item]);
+        alert("분석 이미지가 클립보드에 복사되었습니다. (붙여넣기 가능)");
+    } catch (err) {
+        console.error("Clipboard Error:", err);
+        alert("이미지 복사에 실패했습니다.");
     }
 }
 

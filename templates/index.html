@@ -244,11 +244,28 @@
                 });
             }
 
-            const GAS_URL = "https://script.google.com/macros/s/AKfycbxDKV1RBlLvrYnTLqytBJKdgu_WdBMmAU03na0_8GHvTRF9DhcL38tYdQA-6sIB5jMVBw/exec";
+            const CONVEX_URL = "https://your-convex-app-url.convex.cloud"; // USER should replace this or I should prompt for it
+
+            // Import Convex Client
+            let convexClient;
+            async function initConvex() {
+                try {
+                    const { ConvexClient } = await import("https://unpkg.com/convex@1.11.0/dist/browser/index.js");
+                    convexClient = new ConvexClient(CONVEX_URL);
+                    console.log("Convex Client Initialized");
+                } catch (err) {
+                    console.error("Failed to load Convex:", err);
+                }
+            }
+            initConvex();
 
             document.getElementById('uploadForm').addEventListener('submit', async function (e) {
                 e.preventDefault();
                 if (imagesQueue.length === 0) return;
+                if (!convexClient) {
+                    alert("시스템 초기화 중입니다. 잠시 후 다시 시도해주세요.");
+                    return;
+                }
 
                 const btn = document.getElementById('submitBtn');
                 const originalText = btn.innerHTML;
@@ -259,31 +276,34 @@
                 const phone = document.getElementById('phoneInput').value;
 
                 try {
+                    // 1. Create Request
+                    const requestId = await convexClient.mutation("requests:submit", { name, phone });
+
+                    // 2. Upload Images
                     for (let i = 0; i < imagesQueue.length; i++) {
-                        btn.innerHTML = `전송 중... (${i + 1}/${imagesQueue.length})`;
                         const img = imagesQueue[i];
+                        btn.innerHTML = `이미지 처리 중... (${i + 1}/${imagesQueue.length})`;
 
-                        // Compress Image to Base64 (Resize for speed)
-                        const base64 = await compressAndGetBase64(img.file);
+                        // Get Upload URL
+                        const postUrl = await convexClient.mutation("images:generateUploadUrl");
 
-                        const payload = {
-                            type: "CLIENT_UPLOAD",
-                            name: name,
-                            phone: phone,
+                        // Upload to Convex Storage
+                        const result = await fetch(postUrl, {
+                            method: "POST",
+                            headers: { "Content-Type": img.file.type },
+                            body: img.file,
+                        });
+                        const { storageId } = await result.json();
+
+                        // Link to Request
+                        await convexClient.mutation("images:saveImage", {
+                            requestId,
+                            storageId,
                             location: img.loc,
-                            refType: img.ref,
-                            image: base64,
-                            filename: `upload_${Date.now()}.jpg`
-                        };
-
-                        const response = await fetch(GAS_URL, {
-                            method: 'POST',
-                            mode: 'no-cors', // GAS requires no-cors sometimes for simple POST
-                            body: JSON.stringify(payload)
+                            refType: img.ref
                         });
 
-                        // Note: mode 'no-cors' wont return success status clearly, 
-                        // but usually it works if no error thrown.
+                        btn.innerHTML = `전송 중... (${i + 1}/${imagesQueue.length})`;
                     }
 
                     document.getElementById('uploadForm').classList.add('hidden');
@@ -308,7 +328,7 @@
                             const canvas = document.createElement('canvas');
                             let width = img.width;
                             let height = img.height;
-                            const MAX_SIZE = 1600;
+                            const MAX_SIZE = 1200;
 
                             if (width > height) {
                                 if (width > MAX_SIZE) {
@@ -326,8 +346,8 @@
                             canvas.height = height;
                             const ctx = canvas.getContext('2d');
                             ctx.drawImage(img, 0, 0, width, height);
-                            // Compress to JPEG with 0.8 quality
-                            resolve(canvas.toDataURL('image/jpeg', 0.8));
+                            // Compress to JPEG with 0.6 quality (Faster upload, still good enough for analysis)
+                            resolve(canvas.toDataURL('image/jpeg', 0.6));
                         };
                     };
                     reader.onerror = error => reject(error);

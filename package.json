@@ -1,0 +1,16 @@
+{
+    "name": "kcc-scan-a4",
+    "version": "1.0.0",
+    "description": "KCC Window Scan System with A4 Reference",
+    "main": "main.py",
+    "scripts": {
+        "dev": "uvicorn main:app --reload",
+        "convex:dev": "convex dev"
+    },
+    "dependencies": {
+        "convex": "^1.11.0"
+    },
+    "devDependencies": {
+        "typescript": "^5.0.0"
+    }
+}
